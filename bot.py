@@ -12,12 +12,13 @@ from telegram.ext import (
     filters,
 )
 
+# Railway + mahalliy .env ikkalasida ham ishlaydi
 from dotenv import load_dotenv
+load_dotenv()  # .env fayl boʻlsa oʻqiydi, yoʻq boʻlsa muammo emas
 
-load_dotenv()
 TOKEN = os.getenv("BOT_TOKEN")
 if not TOKEN:
-    raise ValueError(".env faylda BOT_TOKEN ni to'ldiring!")
+    raise ValueError("BOT_TOKEN topilmadi! Railway Variables ga qoʻshing yoki .env fayl yarating.")
 
 # Majburiy kanallar
 REQUIRED_CHANNELS = [
@@ -28,9 +29,9 @@ REQUIRED_CHANNELS = [
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# ------------------- DATABASE (toza 2 ustunli) -------------------
+# ------------------- DATABASE -------------------
 def init_db():
-    conn = sqlite3.connect("users.db", check_same_thread=False)
+    conn = sqlite3.connect("users.db")
     c = conn.cursor()
     c.execute("""CREATE TABLE IF NOT EXISTS allowed_users
                  (user_id INTEGER PRIMARY KEY, added_at TEXT)""")
@@ -38,22 +39,22 @@ def init_db():
     conn.close()
 
 def is_allowed(user_id: int) -> bool:
-    conn = sqlite3.connect("users.db", check_same_thread=False)
+    conn = sqlite3.connect("users.db")
     c = conn.cursor()
     c.execute("SELECT 1 FROM allowed_users WHERE user_id = ?", (user_id,))
-    res = c.fetchone() is not None
+    result = c.fetchone() is not None
     conn.close()
-    return res
+    return result
 
 def add_allowed(user_id: int):
-    conn = sqlite3.connect("users.db", check_same_thread=False)
+    conn = sqlite3.connect("users.db")
     c = conn.cursor()
     c.execute("INSERT OR IGNORE INTO allowed_users (user_id, added_at) VALUES (?, ?)",
               (user_id, datetime.now().isoformat()))
     conn.commit()
     conn.close()
 
-# ------------------- OBUNA TEKSHIRISH -------------------
+# ------------------- OBUNA + KLAVYATURA -------------------
 async def check_sub(bot, user_id: int) -> bool:
     for ch in REQUIRED_CHANNELS:
         try:
@@ -65,33 +66,25 @@ async def check_sub(bot, user_id: int) -> bool:
     return True
 
 def get_keyboard():
-    rows = []
+    keyboard = []
     for ch in REQUIRED_CHANNELS:
-        rows.append([InlineKeyboardButton(f"Obuna bo'lish → {ch}", url=f"https://t.me/{ch[1:]}")])
-    rows.append([InlineKeyboardButton("Tekshirish", callback_data="check")])
-    return InlineKeyboardMarkup(rows)
+        keyboard.append([InlineKeyboardButton(f"Obuna bo'lish → {ch}", url=f"https://t.me/{ch[1:]}")])
+    keyboard.append([InlineKeyboardButton("Tekshirish", callback_data="check")])
+    return InlineKeyboardMarkup(keyboard)
 
 # ------------------- SPAM ANIQLASH -------------------
-def is_spam(message) -> bool:
-    if not message:
-        return False
-
-    text = (message.text or "") + (message.caption or "")
+def is_spam(msg):
+    if not msg: return False
+    text = (msg.text or "") + (msg.caption or "")
     if text and any(x in text.lower() for x in ["http", "t.me/", "@", "www.", ".com", ".uz", ".ru", "bit.ly"]):
         return True
+    if msg.forward_origin: return True
+    return bool(msg.photo or msg.video or msg.animation or msg.sticker or
+                msg.document or msg.audio or msg.voice or msg.poll or
+                msg.location or msg.contact)
 
-    if message.forward_origin is not None:
-        return True
-
-    if any([message.photo, message.video, message.animation, message.sticker,
-            message.document, message.audio, message.voice, message.video_note,
-            message.poll, message.location, message.contact]):
-        return True
-
-    return False
-
-# ------------------- XABARLAR -------------------
-async def handle_all(update: Update, context: ContextTypes.DEFAULT_TYPE):
+# ------------------- HANDLERLAR -------------------
+async def handle_msg(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = update.effective_message
     user = update.effective_user
     chat = update.effective_chat
@@ -108,13 +101,10 @@ async def handle_all(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except:
             pass
 
-        text = (
-            f"@{user.username or user.first_name or 'User'}, reklama va media taqiqlangan!\n\n"
-            "Reklama qilish uchun quyidagi kanallarga obuna boʻling:"
-        )
+        text = f"@{user.username or user.first_name or 'User'} reklama va media taqiqlangan!\n\nReklama qilish uchun quyidagi kanallarga obuna boʻling:"
         await chat.send_message(text, reply_markup=get_keyboard(), disable_web_page_preview=True)
 
-async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
     await q.answer()
 
@@ -125,20 +115,20 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         else:
             await q.edit_message_text("Hali barcha kanallarga obuna boʻlmagansiz!", reply_markup=get_keyboard())
 
-# ------------------- ERROR HANDLER (xatolarni yashirish uchun) -------------------
+# ------------------- ERROR HANDLER -------------------
 async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE):
-    logger.error(f"Xato: {context.error}")
+    logger.error(f"Xato: {context.error}", exc_info=True)
 
 # ------------------- MAIN -------------------
 def main():
     init_db()
     app = Application.builder().token(TOKEN).build()
 
-    app.add_handler(MessageHandler(filters.ALL & ~filters.COMMAND, handle_all))
-    app.add_handler(CallbackQueryHandler(button_handler))
-    app.add_error_handler(error_handler)   # <-- Xatolarni yashiradi
+    app.add_handler(MessageHandler(filters.ALL & ~filters.COMMAND, handle_msg))
+    app.add_handler(CallbackQueryHandler(button))
+    app.add_error_handler(error_handler)
 
-    print("Bot ishga tushdi! Istalgan guruhga qoʻshib sinang.")
+    print("Bot Railway’da muvaffaqiyatli ishga tushdi!")
     app.run_polling(drop_pending_updates=True)
 
 if __name__ == "__main__":
